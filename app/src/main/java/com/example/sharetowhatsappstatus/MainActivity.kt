@@ -7,13 +7,19 @@
 
 package com.example.sharetowhatsappstatus
 
+import android.app.ActivityOptions
+import android.app.PendingIntent
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.service.chooser.ChooserAction
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import com.example.sharetowhatsappstatus.ColorUtils.toHexString
 
 class MainActivity : ComponentActivity() {
@@ -142,7 +149,7 @@ class MainActivity : ComponentActivity() {
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(text = "Post Status")
+                    Text(text = "Share Status")
                 }
             }
         }
@@ -247,47 +254,93 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun launchStatusIntent() {
-        val intent = Intent().apply {
-            action = Intent.ACTION_VIEW
-            setData(Uri.parse(WHATSAPP_STATUS_DEEPLINK))
-            setPackage(CONSUMER_PACKAGE_NAME)
+    private fun getStatusIntent() = Intent().apply {
+        action = Intent.ACTION_VIEW
+        data = WHATSAPP_STATUS_DEEPLINK.toUri()
+        setPackage(CONSUMER_PACKAGE_NAME)
 
-            backgroundMedia?.let {
-                putExtra(Intent.EXTRA_STREAM, it)
-                grantUriPermission(
-                    CONSUMER_PACKAGE_NAME,
-                    it,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
-
-            foregroundMedia?.let {
-                putExtra(FOREGROUND_MEDIA_URI_EXTRA_KEY, it)
-                grantUriPermission(
-                    CONSUMER_PACKAGE_NAME,
-                    it,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
-
-            putExtra(WHATSAPP_SHARE_TYPE_EXTRA_KEY, "SHARE_TO_STATUS")
-            putExtra(SOURCE_APP_PACKAGE_NAME_EXTRA_KEY, packageName)
-            bgColor?.let {
-                putExtra(BACKGROUND_COLOR_EXTRA_KEY, it.toHexString())
-            }
-
-            gradientTop?.let {
-                putExtra(BACKGROUND_GRADIENT_TOP_EXTRA_KEY, it.toHexString())
-            }
-
-            gradientBottom?.let {
-                putExtra(BACKGROUND_GRADIENT_BOTTOM_EXTRA_KEY, it.toHexString())
-            }
-            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        backgroundMedia?.let {
+            putExtra(Intent.EXTRA_STREAM, it)
+            grantUriPermission(
+                CONSUMER_PACKAGE_NAME,
+                it,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
         }
 
-        startActivityForResult(intent, 0)
+        foregroundMedia?.let {
+            putExtra(FOREGROUND_MEDIA_URI_EXTRA_KEY, it)
+            grantUriPermission(
+                CONSUMER_PACKAGE_NAME,
+                it,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+
+        putExtra(WHATSAPP_SHARE_TYPE_EXTRA_KEY, "SHARE_TO_STATUS")
+        putExtra(SOURCE_APP_PACKAGE_NAME_EXTRA_KEY, packageName)
+        bgColor?.let {
+            putExtra(BACKGROUND_COLOR_EXTRA_KEY, it.toHexString())
+        }
+
+        gradientTop?.let {
+            putExtra(BACKGROUND_GRADIENT_TOP_EXTRA_KEY, it.toHexString())
+        }
+
+        gradientBottom?.let {
+            putExtra(BACKGROUND_GRADIENT_BOTTOM_EXTRA_KEY, it.toHexString())
+        }
+
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+    }
+
+    private fun launchStatusIntent() {
+        // If supported, launch the OS share sheet with a custom action
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            launchShareSheet()
+        } else {
+            // Share to Whatsapp Status directly
+            startActivityForResult(getStatusIntent(), 0)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private fun launchShareSheet() {
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "*/*" // Generic MIME type for any media (photo or video)
+            putExtra(Intent.EXTRA_STREAM, foregroundMedia ?: backgroundMedia)
+        }
+
+        val proxyIntent = Intent(this, WhatsappStatusProxyActivity::class.java).apply {
+            putExtra(EXTRA_TARGET_INTENT, getStatusIntent())
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+        }
+
+        val options = ActivityOptions.makeBasic()
+        options.pendingIntentCreatorBackgroundActivityStartMode =
+            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+
+        val customActionIntent = PendingIntent.getActivity(
+            this,
+            0,
+            proxyIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            options.toBundle()
+        )
+
+        val customAction = ChooserAction.Builder(
+            Icon.createWithResource(this, R.mipmap.ic_launcher_round),
+            "Share to Status",
+            customActionIntent
+        ).build()
+
+        val chooserIntent = Intent.createChooser(shareIntent, "Share Media").apply {
+            putExtra(Intent.EXTRA_CHOOSER_CUSTOM_ACTIONS, arrayOf(customAction))
+        }
+
+        startActivity(chooserIntent)
     }
 
     companion object {
@@ -307,5 +360,6 @@ class MainActivity : ComponentActivity() {
         private const val SOURCE_APP_PACKAGE_NAME_EXTRA_KEY = "source_app_package_name"
         private const val FOREGROUND_MEDIA_URI_EXTRA_KEY = "foreground_media"
         private const val CONSUMER_PACKAGE_NAME = "com.whatsapp"
+        const val EXTRA_TARGET_INTENT = "extra_target_intent"
     }
 }
